@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <mach/vm_prot.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -13,6 +14,7 @@ struct core_segment {
     uint64_t filesize;
     uint64_t vmbase;
     uint64_t vmsize;
+    vm_prot_t prot;
 };
 
 enum core_format {

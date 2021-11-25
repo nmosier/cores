@@ -158,6 +158,7 @@ static int core_open_macho32(FILE *f, struct core *core) {
                 cseg->filesize = mseg->filesize;
                 cseg->vmbase   = mseg->vmaddr;
                 cseg->vmsize   = mseg->vmsize;
+                cseg->prot     = mseg->initprot;
                 break;
             }
                 
@@ -202,6 +203,7 @@ static int core_open_macho64(FILE *f, struct core *core) {
                 cseg->filesize = mseg->filesize;
                 cseg->vmbase   = mseg->vmaddr;
                 cseg->vmsize   = mseg->vmsize;
+                cseg->prot     = mseg->initprot;
                 break;
             }
         }

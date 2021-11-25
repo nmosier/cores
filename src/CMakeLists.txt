@@ -2,6 +2,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 add_library(cores STATIC
   core.h core.c
+  symbols.h symbols.c
   )
 
 add_executable(macho-test
