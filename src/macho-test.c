@@ -14,4 +14,22 @@ int main(int argc, char *argv[]) {
         core_perror("core_fopen");
         return EXIT_FAILURE;
     }
+    
+    FILE *f = core.vm.f;
+    if (fseek(f, 0xbff80fbc, SEEK_SET) < 0) {
+        perror("fseek");
+        return EXIT_FAILURE;
+    }
+    
+    uint32_t val;
+    if (fread(&val, sizeof(val), 1, f) != 1) {
+        if (feof(f)) {
+            fprintf(stderr, "unexpected EOF\n");
+        } else {
+            perror("fread");
+        }
+        return EXIT_FAILURE;
+    }
+    
+    printf("%x\n", val);
 }

@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
+#include <assert.h>
 
 #include <mach-o/loader.h>
 
@@ -35,16 +36,25 @@ goto error; \
 } \
 } while (0)
 
+#define min(a, b) ((a) < (b) ? (a) : (b))
+
 static int core_open_macho32(FILE *f, struct core *core);
 static int core_open_macho64(FILE *f, struct core *core);
+static int core_open_vm(struct core *core);
 
 _Thread_local const char *errfn;
 
+static void core_vm_init(struct core_vm *vm) {
+    vm->f = NULL;
+    vm->pos = 0;
+}
+
 static void core_init(struct core *core, FILE *f) {
-    core->f = f;
-    core->fmt = CORE_INVALID;
+    core->f    = f;
+    core->fmt  = CORE_INVALID;
     core->segc = 0;
     core->segv = NULL;
+    core_vm_init(&core->vm);
 }
 
 void core_perror(const char *s) {
@@ -94,6 +104,10 @@ int core_open(FILE *f, struct core *core) {
         goto error;
     }
     
+    if (core_open_vm(core) < 0) {
+        goto error;
+    }
+    
     return res;
     
 error:
@@ -120,6 +134,12 @@ error:
 static int core_open_macho32(FILE *f, struct core *core) {
     struct mach_header hdr;
     fread_one_chk(hdr, f);
+    
+    if (hdr.filetype != MH_CORE) {
+        errfn = __FUNCTION__;
+        errno = EINVAL;
+        goto error;
+    }
     
     if (core_reserve_segments(core, hdr.ncmds) < 0) {
         goto error;
@@ -191,6 +211,88 @@ static int core_open_macho64(FILE *f, struct core *core) {
     
     return 0;
     
+error:
+    return -1;
+}
+
+// find segment containing vmaddr
+static struct core_segment *core_find_vmaddr(struct core *core, uint64_t vmaddr) {
+    for (size_t i = 0; i < core->segc; ++i) {
+        struct core_segment *seg = &core->segv[i];
+        if (seg->vmbase <= vmaddr && vmaddr < seg->vmbase + seg->vmsize) {
+            return seg;
+        }
+    }
+    return NULL;
+}
+
+/* create vm file using funopen(3) */
+typedef int core_vm_read_t(void *, char *, int);
+typedef fpos_t core_vm_seek_t(void *, fpos_t, int);
+
+static int core_vm_read(struct core *core, char *buf, int size) {
+    FILE *vm_f = core->vm.f;
+    FILE *core_f = core->f;
+    fpos_t *vmaddr = &core->vm.pos;
+    
+    int total = 0;
+    while (size > 0) {
+        /* find segment containing vm_addr */
+        struct core_segment *seg;
+        if ((seg = core_find_vmaddr(core, *vmaddr)) == NULL) {
+            break;
+        }
+        const uint64_t offset = *vmaddr - seg->vmbase;
+        if (offset >= seg->filesize) {
+            fprintf(stderr, "%s: internal error: filesize < vmsize\n", __FUNCTION__);
+            abort();
+        }
+        const uint64_t fileoff = seg->filebase + offset;
+        fseek_chk(core->f, fileoff, SEEK_SET, error);
+        const int bytes_read = min(seg->filesize - offset, size);
+        fread_chk(buf, bytes_read, core->f);
+        
+        size -= bytes_read;
+        total += bytes_read;
+        *vmaddr += bytes_read;
+    }
+    
+    return total;
+    
+error:
+    return -1;
+}
+
+static fpos_t core_vm_seek(struct core *core, fpos_t pos, int whence) {
+    switch (whence) {
+        case SEEK_SET:
+            core->vm.pos = pos;
+            break;
+            
+        case SEEK_CUR:
+            core->vm.pos += pos;
+            break;
+            
+        case SEEK_END:
+        default:
+            errno = EINVAL;
+            goto error;
+    }
+    
+    return core->vm.pos;
+    
+error:
+    return -1;
+}
+
+static int core_open_vm(struct core *core) {
+    if ((core->vm.f = funopen(core, (core_vm_read_t *) &core_vm_read, NULL, (core_vm_seek_t *) &core_vm_seek, NULL)) == NULL) {
+        errfn = "funopen";
+        goto error;
+    }
+    
+    return 0;
+
 error:
     return -1;
 }
