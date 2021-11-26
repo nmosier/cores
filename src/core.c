@@ -8,6 +8,8 @@
 #include "core.h"
 #include "util.h"
 #include "macho.h"
+#include "bound.h"
+#include "symbols.h"
 
 static int core_open_macho32(FILE *f, struct core *core);
 static int core_open_macho64(FILE *f, struct core *core);
@@ -282,5 +284,50 @@ off_t core_ftovm(const struct core *core, off_t fileoff) {
     }
     errfn = __FUNCTION__;
     errno = ERANGE;
+    return -1;
+}
+
+
+ssize_t core_symbols(const struct core *core, char ***symvecp) {
+    free(*symvecp);
+    
+    size_t count = 0;
+    for (size_t i = 0; i < core->segc; ++i) {
+        const struct core_segment *seg = &core->segv[i];
+        
+        if (seg->prot != (VM_PROT_READ | VM_PROT_EXECUTE)) {
+            continue;
+        }
+        
+        FILE *seg_f;
+        if ((seg_f = lbound_open(core->vm, seg->vmbase)) == NULL) {
+            goto error;
+        }
+        
+        struct core incore;
+        if (core_open(seg_f, &incore, seg_f) < 0) {
+            continue;
+        }
+        
+        struct symbols syms;
+        if (symbols_open(&incore, &syms) < 0) {
+            continue;
+        }
+        
+        const size_t newcount = count + syms.symc;
+        if ((*symvecp = reallocf(*symvecp, sizeof(char *) * newcount)) == NULL) {
+            goto error;
+        }
+        
+        for (size_t i = 0; i < syms.symc; ++i) {
+            (*symvecp)[count + i] = syms.symv[i].name;
+        }
+        
+        count = newcount;
+    }
+    
+    return count;
+    
+error:
     return -1;
 }

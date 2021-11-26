@@ -39,6 +39,9 @@ void core_perror(const char *s);
 
 off_t core_ftovm(const struct core *core, off_t fileoff);
 
+/* this lists all symbols in a core file */
+ssize_t core_symbols(const struct core *core, char ***symvecp);
+
 #ifdef __cplusplus
 }
 #endif

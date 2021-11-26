@@ -16,6 +16,33 @@ int main(int argc, char *argv[]) {
     }
     
     const char *path = argv[1];
+    
+#if 1
+    {
+        struct core core;
+        if (core_fopen(path, &core) < 0) {
+            core_perror("core_fopen");
+            return EXIT_FAILURE;
+        }
+        
+        char **symvec = NULL;
+        ssize_t nsyms;
+        if ((nsyms = core_symbols(&core, &symvec)) < 0) {
+            core_perror("core_symbols");
+            return EXIT_FAILURE;
+        }
+        printf("nsyms=%zu\n", nsyms);
+        printf("ptr=%p\n", symvec);
+        for (size_t i = 0; i < nsyms; ++i) {
+            printf("%s\n", symvec[i]);
+        }
+        
+        
+        return EXIT_SUCCESS;
+    }
+    
+#endif
+    
 
 #if 1
     struct core core;
