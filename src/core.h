@@ -15,6 +15,7 @@ struct core_segment {
     uint64_t vmbase;
     uint64_t vmsize;
     vm_prot_t prot;
+    char *name;
 };
 
 enum core_format {

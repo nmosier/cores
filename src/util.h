@@ -1,5 +1,7 @@
 #pragma once
 
+#include <errno.h>
+
 #define fread_chk(ptr, nitems, file) do { \
 if (fread(ptr, sizeof(*ptr), nitems, file) != nitems) { \
 if (feof(file)) { \
@@ -43,12 +45,18 @@ goto error; \
 } while (0)
 
 #define malloc_chk(ptr, size) do { \
-if ((ptr = malloc(size))) { \
+if ((ptr = malloc(size)) == NULL) { \
 errfn = "malloc"; \
 goto error; \
 } \
 } while (0)
 
+#define strdup_chk(ptr, s) do { \
+if ((ptr = strdup(s)) == NULL) { \
+errfn = "strdup"; \
+goto error; \
+} \
+} while (0)
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #define max(a, b) ((a) > (b) ? (a) : (b))

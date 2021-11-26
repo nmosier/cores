@@ -6,43 +6,14 @@
 #include <mach-o/loader.h>
 
 #include "core.h"
-
-
-#define fread_chk(ptr, nitems, file) do { \
-if (fread(ptr, sizeof(*ptr), nitems, file) != nitems) { \
-if (feof(file)) { \
-errfn = __FUNCTION__; \
-errno = EINVAL; \
-} else { \
-errfn = "fread"; \
-} \
-goto error; \
-} \
-} while (0)
-
-#define fread_one_chk(var, file) fread_chk(&var, 1, file)
-
-#define ftell_chk(var, file, err) do { \
-if ((var = ftell(file)) < 0) { \
-errfn = "ftell"; \
-goto error; \
-} \
-} while (0)
-
-#define fseek_chk(file, offset, whence, err) do { \
-if (fseek(file, offset, whence) < 0) { \
-errfn = "fseek"; \
-goto error; \
-} \
-} while (0)
-
-#define min(a, b) ((a) < (b) ? (a) : (b))
+#include "util.h"
+#include "macho.h"
 
 static int core_open_macho32(FILE *f, struct core *core);
 static int core_open_macho64(FILE *f, struct core *core);
 static int core_open_vm(struct core *core);
 
-_Thread_local const char *errfn;
+_Thread_local const char *errfn = NULL;
 
 static void core_vm_init(struct core_vm *vm) {
     vm->f = NULL;
@@ -92,7 +63,7 @@ int core_open(FILE *f, struct core *core) {
     }
     uint32_t magic;
     fread_one_chk(magic, f);
-    fseek_chk(f, -4, SEEK_CUR, error);
+    fseek_chk(f, -4, SEEK_CUR);
     
     int res;
     if (magic == MH_MAGIC) {
@@ -114,32 +85,19 @@ error:
     return -1;
 }
 
-static struct load_command *macho_parse_lc(FILE *f) {
-    struct load_command cmd;
-    struct load_command *cmdp = NULL;
-    fread_one_chk(cmd, f);
-    if ((cmdp = malloc(cmd.cmdsize)) == NULL) {
-        errfn = "malloc";
-        goto error;
-    }
-    memcpy(cmdp, &cmd, sizeof(cmd));
-    fread_chk((char *) (cmdp + 1), cmd.cmdsize - sizeof(cmd), f);
-    return cmdp;
-    
-error:
-    free(cmdp);
-    return NULL;
-}
+
 
 static int core_open_macho32(FILE *f, struct core *core) {
     struct mach_header hdr;
     fread_one_chk(hdr, f);
     
+#if 0
     if (hdr.filetype != MH_CORE) {
         errfn = __FUNCTION__;
         errno = EINVAL;
         goto error;
     }
+#endif
     
     if (core_reserve_segments(core, hdr.ncmds) < 0) {
         goto error;
@@ -159,6 +117,7 @@ static int core_open_macho32(FILE *f, struct core *core) {
                 cseg->vmbase   = mseg->vmaddr;
                 cseg->vmsize   = mseg->vmsize;
                 cseg->prot     = mseg->initprot;
+                strdup_chk(cseg->name, mseg->segname);
                 break;
             }
                 
@@ -179,11 +138,13 @@ static int core_open_macho64(FILE *f, struct core *core) {
     struct mach_header_64 hdr;
     fread_one_chk(hdr, f);
     
+#if 0
     if (hdr.filetype != MH_CORE) {
         errfn = __FUNCTION__;
         errno = EINVAL;
         goto error;
     }
+#endif
     
     if (core_reserve_segments(core, hdr.ncmds) < 0) {
         goto error;
@@ -204,6 +165,7 @@ static int core_open_macho64(FILE *f, struct core *core) {
                 cseg->vmbase   = mseg->vmaddr;
                 cseg->vmsize   = mseg->vmsize;
                 cseg->prot     = mseg->initprot;
+                strdup_chk(cseg->name, mseg->segname);
                 break;
             }
         }
@@ -250,7 +212,7 @@ static int core_vm_read(struct core *core, char *buf, int size) {
             abort();
         }
         const uint64_t fileoff = seg->filebase + offset;
-        fseek_chk(core->f, fileoff, SEEK_SET, error);
+        fseek_chk(core->f, fileoff, SEEK_SET);
         const int bytes_read = min(seg->filesize - offset, size);
         fread_chk(buf, bytes_read, core->f);
         
