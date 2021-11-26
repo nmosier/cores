@@ -11,8 +11,9 @@
 #include "symbols.h"
 #include "macho.h"
 #include "util.h"
+#include "core.h"
 
-static int symbols_open_macho32(FILE *f, struct symbols *syms);
+static int symbols_open_macho32(struct core *core, struct symbols *syms);
 
 extern _Thread_local const char *errfn;
 
@@ -36,9 +37,11 @@ error:
     return -1;
 }
 
+#if 0
 void symbols_perror(const char *s) {
     fprintf(stderr, "%s: %s: %s\n", s, errfn, strerror(errno));
 }
+#endif
 
 static void symbol_init(struct symbol *sym) {
     sym->vmaddr = 0;
@@ -46,7 +49,6 @@ static void symbol_init(struct symbol *sym) {
 }
 
 static void symbols_init(struct symbols *syms) {
-    syms->f = NULL;
     syms->symc = 0;
     syms->symv = NULL;
 }
@@ -88,22 +90,19 @@ const struct symbol *symbols_find(const struct symbols *syms, uint64_t vmaddr) {
     }
 }
 
-int symbols_open(FILE *f, struct symbols *syms) {
+int symbols_open(struct core *core, struct symbols *syms) {
     symbols_init(syms);
 
-    fseek_chk(f, 0, SEEK_SET);
+    rewind(core->f);
 
-    syms->f = f;
-    
     uint32_t magic;
-    
 
-    if (fread_peek(&magic, sizeof(magic), 1, f) < 0) {
+    if (fread_peek(&magic, sizeof(magic), 1, core->f) < 0) {
         goto error;
     }
 
     if (magic == MH_MAGIC) {
-        if (symbols_open_macho32(f, syms) < 0) {
+        if (symbols_open_macho32(core, syms) < 0) {
             goto error;
         }
     } else {
@@ -120,15 +119,15 @@ error:
     return -1;
 }
 
-static int symbols_macho32_handle_symtab(FILE *f, struct symbols *syms, struct symtab_command *symtab);
-static int symbols_open_macho32(FILE *f, struct symbols *syms) {
+static int symbols_macho32_handle_symtab(struct core *core, struct symbols *syms, struct symtab_command *symtab);
+static int symbols_open_macho32(struct core *core, struct symbols *syms) {
     struct mach_header hdr;
-    fread_one_chk(hdr, f);
+    fread_one_chk(hdr, core->f);
     assert(hdr.magic == MH_MAGIC);
     
     for (size_t i = 0; i < hdr.ncmds; ++i) {
         struct load_command *cmd;
-        if ((cmd = macho_parse_lc(f)) == NULL) {
+        if ((cmd = macho_parse_lc(core->f)) == NULL) {
             goto error;
         }
         
@@ -136,14 +135,14 @@ static int symbols_open_macho32(FILE *f, struct symbols *syms) {
             case LC_SYMTAB: {
                 struct symtab_command *symtab = (struct symtab_command *) cmd;
                 fpos_t pos;
-                if (fgetpos(f, &pos) < 0) {
+                if (fgetpos(core->f, &pos) < 0) {
                     errfn = "fgetpos";
                     goto error;
                 }
-                if (symbols_macho32_handle_symtab(f, syms, symtab) < 0) {
+                if (symbols_macho32_handle_symtab(core, syms, symtab) < 0) {
                     goto error;
                 }
-                if (fsetpos(f, &pos) < 0) {
+                if (fsetpos(core->f, &pos) < 0) {
                     errfn = "fsetpos";
                     goto error;
                 }
@@ -160,24 +159,30 @@ error:
     return -1;
 }
 
-static int symbols_macho32_handle_symtab(FILE *f, struct symbols *syms, struct symtab_command *symtab) {
+static int symbols_macho32_handle_symtab(struct core *core, struct symbols *syms, struct symtab_command *symtab) {
     /* read string table */
-    fseek_chk(f, symtab->stroff, SEEK_SET);
-    char *strtab;
-    if ((strtab = malloc(symtab->strsize)) == NULL) {
-        errfn = "malloc";
+    off_t vm_stroff, vm_symoff;
+    if ((vm_stroff = core_ftovm(core, symtab->stroff)) < 0 ||
+        (vm_symoff = core_ftovm(core, symtab->symoff)) < 0) {
         goto error;
     }
-    fread_chk(strtab, symtab->strsize, f);
     
-    fseek_chk(f, symtab->symoff, SEEK_SET);
+    fprintf(stderr, "vm_stroff=%08llx, vm_symoff=%08llx\n", vm_stroff, vm_symoff);
+    
+    fseek_chk(core->vm, vm_stroff, SEEK_SET);
+    char *strtab;
+    malloc_chk(strtab, symtab->strsize);
+    fread_chk(strtab, symtab->strsize, core->vm);
+    
+
+    fseek_chk(core->vm, vm_symoff, SEEK_SET);
     if (symbols_reserve(syms, symtab->nsyms) < 0) {
         goto error;
     }
     
     for (size_t i = 0; i < symtab->nsyms; ++i) {
         struct nlist sym;
-        fread_one_chk(sym, f);
+        fread_one_chk(sym, core->vm);
 
         // check symbol type
         if ((sym.n_type & N_EXT)) {
@@ -220,5 +225,6 @@ static int symbols_macho32_handle_symtab(FILE *f, struct symbols *syms, struct s
     return 0;
     
 error:
+    fprintf(stderr, "%s error\n", __FUNCTION__);
     return -1;
 }

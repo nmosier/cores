@@ -24,23 +24,20 @@ enum core_format {
     CORE_MACHO64,
 };
 
-struct core_vm {
-    FILE *f;
-    fpos_t pos;
-};
-
 struct core {
     FILE *f; // backing file
     enum core_format fmt; // format of core
     size_t segc;
     struct core_segment *segv;
-    struct core_vm vm;
+    FILE *vm;
 };
 
 int core_fopen(const char *path, struct core *core);
-int core_open(FILE *f, struct core *core);
+int core_open(FILE *f, struct core *core, FILE *vm); // vm may be null
 
 void core_perror(const char *s);
+
+off_t core_ftovm(const struct core *core, off_t fileoff);
 
 #ifdef __cplusplus
 }

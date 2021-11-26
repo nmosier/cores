@@ -32,15 +32,15 @@ int main(int argc, char *argv[]) {
         if (seg->prot != (VM_PROT_READ | VM_PROT_EXECUTE)) { continue; }
         
         /* is this an executable? */
-        fseek_chk(core.vm.f, seg->vmbase, SEEK_SET);
+        fseek_chk(core.vm, seg->vmbase, SEEK_SET);
         uint32_t magic;
-        fread_one_chk(magic, core.vm.f);
+        fread_one_chk(magic, core.vm);
         if (magic != MH_MAGIC) {
             continue;
         }
 
         FILE *seg_f;
-        if ((seg_f = lbound_open(core.vm.f, seg->vmbase)) == NULL) {
+        if ((seg_f = lbound_open(core.vm, seg->vmbase)) == NULL) {
             goto error;
         }
         
@@ -62,25 +62,25 @@ int main(int argc, char *argv[]) {
             printf("%s %llx\n", syms.symv[i].name, syms.symv[i].vmaddr);
         }
 #else
-      
+        
         struct core incore;
-        if (core_open(seg_f, &incore) < 0) {
+        if (core_open(seg_f, &incore, seg_f) < 0) {
             core_perror("core_open");
             continue;
         }
         
         printf("core opened\n");
-        printf("core segs: %d\n", incore.segc);
+        printf("core segs: %zu\n", incore.segc);
         
-        // print segmetn vmaddrs
+        // print segment vmaddrs
         for (size_t i = 0; i < incore.segc; ++i) {
             printf("segment name=%s vmaddr=%08llx vmsize=%08llx\n", incore.segv[i].name, incore.segv[i].vmbase, incore.segv[i].vmsize);
         }
-        
-#if 0
+
+#if 1
         struct symbols syms;
-        if (symbols_open(incore.vm.f, &syms) < 0) {
-            symbols_perror("symbols_open");
+        if (symbols_open(&incore, &syms) < 0) {
+            core_perror("symbols_open");
             continue;
         }
         
@@ -102,13 +102,20 @@ error:
     return EXIT_FAILURE;
     
 #else
+    
     FILE *f;
     if ((f = fopen(path, "r")) == NULL) {
         perror("fopen");
         return EXIT_FAILURE;
     }
+    struct core core;
+    if (core_open(f, &core, NULL) < 0) {
+        core_perror("core_open");
+        return EXIT_FAILURE;
+    }
+    
     struct symbols syms;
-    if (symbols_open(f, &syms) < 0) {
+    if (symbols_open(&core, &syms) < 0) {
         symbols_perror("symbols_open");
         return EXIT_FAILURE;
     }

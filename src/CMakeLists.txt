@@ -9,6 +9,7 @@ add_library(cores STATIC
   macho.h macho.c
   util.h util.c
   bound.h bound.c
+  vm.h vm.c
   )
 
 add_executable(macho-test

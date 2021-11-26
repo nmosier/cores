@@ -15,17 +15,12 @@ static int core_open_vm(struct core *core);
 
 _Thread_local const char *errfn = NULL;
 
-static void core_vm_init(struct core_vm *vm) {
-    vm->f = NULL;
-    vm->pos = 0;
-}
-
 static void core_init(struct core *core, FILE *f) {
     core->f    = f;
     core->fmt  = CORE_INVALID;
     core->segc = 0;
     core->segv = NULL;
-    core_vm_init(&core->vm);
+    core->vm   = NULL;
 }
 
 void core_perror(const char *s) {
@@ -46,7 +41,7 @@ int core_fopen(const char *path, struct core *core) {
         goto error;
     }
     int res;
-    if ((res = core_open(f, core)) < 0) {
+    if ((res = core_open(f, core, NULL)) < 0) {
         fclose(f);
     }
     return res;
@@ -55,7 +50,7 @@ error:
     return -1;
 }
 
-int core_open(FILE *f, struct core *core) {
+int core_open(FILE *f, struct core *core, FILE *vm) {
     core_init(core, f);
     if (fseek(f, 0, SEEK_SET) < 0) {
         errfn = "fseek";
@@ -75,8 +70,12 @@ int core_open(FILE *f, struct core *core) {
         goto error;
     }
     
-    if (core_open_vm(core) < 0) {
-        goto error;
+    if (vm == NULL) {
+        if (core_open_vm(core) < 0) {
+            goto error;
+        }
+    } else {
+        core->vm = vm;
     }
     
     return res;
@@ -194,16 +193,21 @@ static struct core_segment *core_find_vmaddr(struct core *core, uint64_t vmaddr)
 typedef int core_vm_read_t(void *, char *, int);
 typedef fpos_t core_vm_seek_t(void *, fpos_t, int);
 
-static int core_vm_read(struct core *core, char *buf, int size) {
-    FILE *vm_f = core->vm.f;
-    FILE *core_f = core->f;
-    fpos_t *vmaddr = &core->vm.pos;
+struct core_vm {
+    struct core *core;
+    fpos_t pos;
+};
+
+
+static int core_vm_read(struct core_vm *vm, char *buf, int size) {
+    FILE *core_f = vm->core->f;
+    fpos_t *vmaddr = &vm->pos;
     
     int total = 0;
     while (size > 0) {
         /* find segment containing vm_addr */
         struct core_segment *seg;
-        if ((seg = core_find_vmaddr(core, *vmaddr)) == NULL) {
+        if ((seg = core_find_vmaddr(vm->core, *vmaddr)) == NULL) {
             break;
         }
         const uint64_t offset = *vmaddr - seg->vmbase;
@@ -212,9 +216,9 @@ static int core_vm_read(struct core *core, char *buf, int size) {
             abort();
         }
         const uint64_t fileoff = seg->filebase + offset;
-        fseek_chk(core->f, fileoff, SEEK_SET);
+        fseek_chk(core_f, fileoff, SEEK_SET);
         const int bytes_read = min(seg->filesize - offset, size);
-        fread_chk(buf, bytes_read, core->f);
+        fread_chk(buf, bytes_read, core_f);
         
         size -= bytes_read;
         total += bytes_read;
@@ -227,14 +231,14 @@ error:
     return -1;
 }
 
-static fpos_t core_vm_seek(struct core *core, fpos_t pos, int whence) {
+static fpos_t core_vm_seek(struct core_vm *vm, fpos_t pos, int whence) {
     switch (whence) {
         case SEEK_SET:
-            core->vm.pos = pos;
+            vm->pos = pos;
             break;
             
         case SEEK_CUR:
-            core->vm.pos += pos;
+            vm->pos += pos;
             break;
             
         case SEEK_END:
@@ -243,14 +247,19 @@ static fpos_t core_vm_seek(struct core *core, fpos_t pos, int whence) {
             goto error;
     }
     
-    return core->vm.pos;
+    return vm->pos;
     
 error:
     return -1;
 }
 
 static int core_open_vm(struct core *core) {
-    if ((core->vm.f = funopen(core, (core_vm_read_t *) &core_vm_read, NULL, (core_vm_seek_t *) &core_vm_seek, NULL)) == NULL) {
+    struct core_vm *vm;
+    malloc_chk(vm, sizeof(*vm));
+    vm->core = core;
+    vm->pos = 0;
+    
+    if ((core->vm = funopen(vm, (core_vm_read_t *) &core_vm_read, NULL, (core_vm_seek_t *) &core_vm_seek, NULL)) == NULL) {
         errfn = "funopen";
         goto error;
     }
@@ -258,5 +267,20 @@ static int core_open_vm(struct core *core) {
     return 0;
 
 error:
+    return -1;
+}
+
+
+// TODO: get rid of this>?
+off_t core_ftovm(const struct core *core, off_t fileoff) {
+    for (size_t i = 0; i < core->segc; ++i) {
+        const struct core_segment *seg = &core->segv[i];
+        if (seg->filebase <= fileoff && fileoff < seg->filebase + seg->filesize) {
+            fprintf(stderr, "%s: match: filebase=%08llx vmbase=%08llx\n", __FUNCTION__, seg->filebase, seg->vmbase);
+            return seg->vmbase + (fileoff - seg->filebase);
+        }
+    }
+    errfn = __FUNCTION__;
+    errno = ERANGE;
     return -1;
 }
